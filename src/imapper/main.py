@@ -12,6 +12,9 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from auth import exauth
+from auth import gauth
+
 console = Console()
 profiles = {}
 
@@ -20,7 +23,70 @@ def obtain_profiles():
     global profiles
     profile_path = "./imapper-profiles.yaml"
     with open(profile_path, "r", encoding="utf-8") as f:
-        profiles = yaml.safe_load(f)
+        profiles = yaml.safe_load(f) or {}
+
+
+def save_profiles():
+    profile_path = "./imapper-profiles.yaml"
+    with open(profile_path, "w", encoding="utf-8") as f:
+        yaml.dump(profiles, f, allow_unicode=True)
+
+
+def add_exchange_account():
+    exchange_auth = exauth.ExchangeAuth()
+
+    account_info = {}
+    profile_name = input("Profile name: ")
+    account_info["mode"] = "exchange"
+    account_info["address"] = input("Enter email address: ")
+    account_info["user"] = account_info["address"]
+    account_info["server"] = "outlook.office365.com"
+
+    device_flow = exchange_auth.request_device_code()
+    message = device_flow.get(
+        "message",
+        f"Open {device_flow.get('verification_uri')} and enter code: {device_flow.get('user_code')}",
+    )
+    console.print(Panel(message, title="Exchange OAuth2 Device Login", expand=False))
+    console.print("Waiting for authorization in browser...")
+
+    access_token_response = exchange_auth.poll_for_token(device_flow)
+    account_info["password"] = access_token_response["access_token"]
+    account_info["refresh_token"] = access_token_response.get("refresh_token", "")
+
+    profiles[profile_name] = account_info
+    save_profiles()
+    console.print(
+        f"[bold green]Successfully added Exchange profile '{profile_name}'.[/]"
+    )
+
+
+def _authenticate_client(client: IMAPClient, server_setting: dict) -> bool:
+    login_mode = server_setting.get("mode", "standard")
+    if login_mode == "standard":
+        client.login(server_setting["user"], server_setting["password"])
+        return True
+    elif login_mode == "oauth2":
+        client.oauth2_login(server_setting["user"], server_setting["password"])
+        return True
+    elif login_mode == "exchange":
+        try:
+            client.oauth2_login(server_setting["user"], server_setting["password"])
+        except IMAPClientError:
+            refresh_token = server_setting.get("refresh_token")
+            if not refresh_token:
+                raise
+            exchange_auth = exauth.ExchangeAuth()
+            token_resp = exchange_auth.refresh_access_token(refresh_token)
+            server_setting["password"] = token_resp["access_token"]
+            if "refresh_token" in token_resp:
+                server_setting["refresh_token"] = token_resp["refresh_token"]
+            save_profiles()
+            client.oauth2_login(server_setting["user"], server_setting["password"])
+        return True
+    else:
+        console.print("Illegal login mode")
+        return False
 
 
 def parse_header_str(data: bytes | str | None) -> str:
@@ -46,19 +112,12 @@ def parse_header_str(data: bytes | str | None) -> str:
 def crawl(days_delta: int):
     for key, server_setting in profiles.items():
         console.print(f"Server: {key}")
-        login_mode = "standard"
-        if "mode" in server_setting:
-            login_mode = server_setting["mode"]
 
         client = IMAPClient(host=server_setting["server"])
 
-        if login_mode == "standard":
-            client.login(server_setting["user"], server_setting["password"])
-        elif login_mode == "oauth2":
-            client.oauth2_login(server_setting["user"], server_setting["password"])
-        else:
-            console.print("Illegal login mode")
+        if not _authenticate_client(client, server_setting):
             break
+
         client.select_folder("INBOX")
         messages = client.search(["UNSEEN"])
 
@@ -169,17 +228,8 @@ def read_mail(msg_id_str: str, account: str | None = None) -> bool:
 
     for key, server_setting in targets.items():
         try:
-            login_mode = "standard"
-
             client = IMAPClient(host=server_setting["server"])
-            if "mode" in server_setting:
-                login_mode = server_setting["mode"]
-            if login_mode == "standard":
-                client.login(server_setting["user"], server_setting["password"])
-            elif login_mode == "oauth2":
-                client.oauth2_login(server_setting["user"], server_setting["password"])
-            else:
-                console.print("Illegal login mode")
+            if not _authenticate_client(client, server_setting):
                 break
 
             client.select_folder("INBOX")
@@ -237,11 +287,20 @@ def main() -> None:
         "--account", "-a", type=str, default=None, help="Account profile name"
     )
 
+    add_account_parser = subparsers.add_parser("add", help="Add account")
+    add_account_parser.add_argument(
+        "type", type=str, choices=["exchange"], help="Account type"
+    )
+
     args = parser.parse_args()
 
     if args.command == "crawl":
         days_delta = args.days_delta
         crawl(days_delta)
+    elif args.command == "add":
+        account_type = args.type
+        if account_type == "exchange":
+            add_exchange_account()
     elif args.command == "read":
         read_mail(args.id, args.account)
 

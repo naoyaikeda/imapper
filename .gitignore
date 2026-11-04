@@ -12,3 +12,4 @@ wheels/
 # Environment file
 .env
 imapper-profiles.yaml
+imapper-profiles.yaml.*
