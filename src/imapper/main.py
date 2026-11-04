@@ -1,21 +1,27 @@
 import argparse
+import email
 from datetime import date, timedelta
+from email import policy
 from email.header import decode_header
 
 import yaml
 from dotenv import load_dotenv
 from imapclient import IMAPClient
+from imapclient.exceptions import IMAPClientError
 from rich.console import Console
+from rich.panel import Panel
 from rich.table import Table
 
 console = Console()
 profiles = {}
 
+
 def obtain_profiles():
     global profiles
-    profile_path = './imapper-profiles.yaml'
-    with open(profile_path, 'r', encoding='utf-8') as f:
+    profile_path = "./imapper-profiles.yaml"
+    with open(profile_path, "r", encoding="utf-8") as f:
         profiles = yaml.safe_load(f)
+
 
 def parse_header_str(data: bytes | str | None) -> str:
     """MIMEエンコードされた文字列をデコードして通常の文字列にする"""
@@ -36,76 +42,188 @@ def parse_header_str(data: bytes | str | None) -> str:
             result.append(fragment)
     return "".join(result)
 
+
 def crawl(days_delta: int):
-
-    for key in profiles:
+    for key, server_setting in profiles.items():
         console.print(f"Server: {key}")
-        server_setting = profiles[key]
 
-        client = IMAPClient(host = server_setting['server'])
-        client.login(server_setting['user'], server_setting['password'])
-        result = client.select_folder('INBOX')
-        messages = client.search(['UNSEEN'])
-    
+        client = IMAPClient(host=server_setting["server"])
+        client.login(server_setting["user"], server_setting["password"])
+        client.select_folder("INBOX")
+        messages = client.search(["UNSEEN"])
+
         console.print(f"Unseen messages {len(messages)}")
 
         since_date = date.today() - timedelta(days=days_delta)
-        criteria = ['UNSEEN', 'SINCE', since_date]
+        criteria = ["UNSEEN", "SINCE", since_date]
         messages = client.search(criteria)
         console.print(f"Unseen messages since {since_date}: {len(messages)}")
 
-        table = Table(title = 'Unreaded mails')
+        table = Table(title="Unreaded mails")
 
+        table.add_column("ID", style="bold cyan", width=10)
         table.add_column("Subject", style="dim", width=60)
         table.add_column("Sender", style="dim", width=20)
         table.add_column("Date", style="dim", width=10)
 
         if messages:
-            response = client.fetch(messages, ['ENVELOPE']) 
+            response = client.fetch(messages, ["ENVELOPE"])
 
             for msg_id, data in response.items():
-                envelope = data[b'ENVELOPE']
+                envelope = data[b"ENVELOPE"]
                 date_str = envelope.date.strftime("%Y-%m-%d %H:%M:%S")
                 subject = (
                     envelope.subject.decode(errors="replace")
                     if envelope.subject
                     else "(No Subject)"
-                ) 
+                )
                 if envelope.from_:
                     sender = envelope.from_[0]
                     # 1. 差出人名 (表示名)
                     sender_name = parse_header_str(sender.name)
 
                     # 2. メールアドレス (mailbox @ host)
-                    mailbox = sender.mailbox.decode(errors="replace") if sender.mailbox else ""
+                    mailbox = (
+                        sender.mailbox.decode(errors="replace")
+                        if sender.mailbox
+                        else ""
+                    )
                     host = sender.host.decode(errors="replace") if sender.host else ""
                     sender_email = f"{mailbox}@{host}" if mailbox and host else ""
 
                     # 表示名があれば「名前 <アドレス>」、なければアドレスのみ
                     display_sender = (
-                        f"{sender_name} <{sender_email}>" if sender_name else sender_email
+                        f"{sender_name} <{sender_email}>"
+                        if sender_name
+                        else sender_email
                     )
                 else:
-                    display_sender = '(No sender)'                
- 
-                hed_date = date_str
-                table.add_row(subject, display_sender, hed_date)
+                    display_sender = "(No sender)"
 
-        console.print(table)        
+                hed_date = date_str
+                table.add_row(str(msg_id), subject, display_sender, hed_date)
+
+        console.print(table)
+
+
+def extract_body(msg: email.message.EmailMessage) -> str:
+    """メールメッセージから本文テキストを抽出する"""
+    body_part = msg.get_body(preferencelist=("plain", "html"))
+    if body_part:
+        try:
+            return body_part.get_content()
+        except (LookupError, UnicodeError, AttributeError, ValueError):
+            return str(body_part.get_payload(decode=True) or "")
+
+    # プレーンテキスト/HTMLパートが見つからない場合のフォールバック
+    if msg.is_multipart():
+        parts = []
+        for part in msg.walk():
+            content_type = part.get_content_type()
+            content_disposition = str(part.get("Content-Disposition", ""))
+            if "attachment" not in content_disposition and content_type in [
+                "text/plain",
+                "text/html",
+            ]:
+                payload = part.get_payload(decode=True)
+                if payload:
+                    charset = part.get_content_charset() or "utf-8"
+                    parts.append(payload.decode(charset, errors="replace"))
+        if parts:
+            return "\n\n".join(parts)
+        return "(No readable body)"
+    else:
+        payload = msg.get_payload(decode=True)
+        if payload:
+            charset = msg.get_content_charset() or "utf-8"
+            return payload.decode(charset, errors="replace")
+        return str(msg.get_payload() or "")
+
+
+def read_mail(msg_id_str: str, account: str | None = None) -> bool:
+    """指定されたIDのメールを取得して表示する"""
+    try:
+        msg_id = int(msg_id_str)
+    except ValueError:
+        console.print(f"[bold red]Error:[/] Invalid message ID: {msg_id_str}")
+        return False
+
+    targets = {}
+    if account:
+        if account not in profiles:
+            console.print(f"[bold red]Error:[/] Profile '{account}' not found.")
+            return False
+        targets[account] = profiles[account]
+    else:
+        targets = profiles
+
+    for key, server_setting in targets.items():
+        try:
+            client = IMAPClient(host=server_setting["server"])
+            client.login(server_setting["user"], server_setting["password"])
+            client.select_folder("INBOX")
+
+            fetch_data = client.fetch([msg_id], ["BODY[]", "RFC822", "FLAGS"])
+            if msg_id in fetch_data:
+                raw_bytes = fetch_data[msg_id].get(b"BODY[]") or fetch_data[msg_id].get(
+                    b"RFC822"
+                )
+                if raw_bytes:
+                    msg = email.message_from_bytes(raw_bytes, policy=policy.default)
+                    subject = str(msg["subject"] or "(No Subject)")
+                    from_addr = str(msg["from"] or "(No sender)")
+                    to_addr = str(msg["to"] or "(No recipient)")
+                    date_header = str(msg["date"] or "(No date)")
+
+                    body = extract_body(msg)
+
+                    header_info = (
+                        f"[bold]Account:[/] {key}\n"
+                        f"[bold]ID:[/] {msg_id}\n"
+                        f"[bold]Date:[/] {date_header}\n"
+                        f"[bold]From:[/] {from_addr}\n"
+                        f"[bold]To:[/] {to_addr}\n"
+                        f"[bold]Subject:[/] {subject}"
+                    )
+                    console.print(
+                        Panel(header_info, title="Message Info", expand=False)
+                    )
+                    console.print(Panel(body, title="Body", expand=False))
+                    return True
+        except (IMAPClientError, OSError) as e:
+            console.print(f"[dim]Failed to query server '{key}': {e}[/]")
+
+    console.print(f"[bold red]Message with ID {msg_id} not found.[/]")
+    return False
+
 
 def main() -> None:
     load_dotenv()
 
     obtain_profiles()
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument('command', type=str, choices=['crawl'], help='')
-    parser.add_argument('--days-delta', type=int, default=1, help='')
+    parser = argparse.ArgumentParser(prog="imapper")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    crawl_parser = subparsers.add_parser("crawl", help="Crawl unread emails")
+    crawl_parser.add_argument(
+        "--days-delta", type=int, default=1, help="Number of days delta"
+    )
+
+    read_parser = subparsers.add_parser("read", help="Read email by ID")
+    read_parser.add_argument("id", type=str, help="Message ID")
+    read_parser.add_argument(
+        "--account", "-a", type=str, default=None, help="Account profile name"
+    )
+
     args = parser.parse_args()
 
-    if args.command == 'crawl':
+    if args.command == "crawl":
         days_delta = args.days_delta
         crawl(days_delta)
+    elif args.command == "read":
+        read_mail(args.id, args.account)
+
 
 if __name__ == "__main__":
     main()

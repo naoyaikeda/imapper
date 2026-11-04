@@ -5,6 +5,13 @@
 フォーマットは [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に基づいており、
 このプロジェクトは [セマンティック バージョニング](https://semver.org/lang/ja/) に準拠しています。
 
+## [Unreleased]
+
+### Added
+
+- `crawl` の一覧表示テーブルにメールを識別する「ID」列を追加。
+- メールIDを指定してメール詳細および本文を表示する `read` コマンドを追加（`--account` / `-a` オプションによるアカウント指定にも対応）。
+
 ## [0.1.0] - 2026-11-04
 
 ### Added
