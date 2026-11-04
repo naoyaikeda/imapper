@@ -46,6 +46,24 @@ class TestParseHeaderStr(unittest.TestCase):
         self.assertEqual(main_module.parse_header_str(raw_str), "テスト")
         self.assertEqual(main_module.parse_header_str(raw_bytes), "テスト")
 
+    def test_mime_encoded_iso2022jp_str_and_bytes(self):
+        raw_str = "=?iso-2022-jp?B?GyRCJUYlOSVIGyhC?="
+        raw_bytes = b"=?iso-2022-jp?B?GyRCJUYlOSVIGyhC?="
+        self.assertEqual(main_module.parse_header_str(raw_str), "テスト")
+        self.assertEqual(main_module.parse_header_str(raw_bytes), "テスト")
+
+    def test_raw_utf8_and_iso2022jp_bytes(self):
+        utf8_bytes = "日本語件名".encode()
+        iso2022jp_bytes = "日本語件名".encode("iso-2022-jp")
+        self.assertEqual(main_module.parse_header_str(utf8_bytes), "日本語件名")
+        self.assertEqual(main_module.parse_header_str(iso2022jp_bytes), "日本語件名")
+
+    def test_unknown_charset_and_invalid_bytes_fallback(self):
+        raw = "=?unknown-charset?B?44OG44K544OI?="
+        self.assertEqual(main_module.parse_header_str(raw), "テスト")
+        invalid_bytes = b"\xff\xfe"
+        self.assertEqual(main_module.parse_header_str(invalid_bytes), "\ufffd\ufffd")
+
     def test_mixed_mime_and_plain_fragments(self):
         # Mixed encoded and unencoded parts make decode_header return (bytes, charset) and (bytes, None)
         raw = "=?utf-8?B?5bGx55Sw?= Tarou"
@@ -113,16 +131,16 @@ class TestCrawl(unittest.TestCase):
         from1.host = b"example.com"
         env1.from_ = [from1]
 
-        # Msg 2: Empty from_ list
+        # Msg 2: Empty from_ list, UTF-8 MIME subject
         env2 = MagicMock()
         env2.date = datetime.datetime(2026, 11, 4, 11, 0, 0)
-        env2.subject = b"Subject 2"
+        env2.subject = b"=?utf-8?B?44OG44K544OI5LqM?="
         env2.from_ = []
 
-        # Msg 3: Sender without mailbox/host
+        # Msg 3: Sender without mailbox/host, ISO-2022-JP MIME subject
         env3 = MagicMock()
         env3.date = datetime.datetime(2026, 11, 4, 12, 0, 0)
-        env3.subject = b"Subject 3"
+        env3.subject = b"=?iso-2022-jp?B?GyRCJUYlOSVIGyhC?="
         from3 = MagicMock()
         from3.name = None
         from3.mailbox = None
@@ -145,7 +163,7 @@ class TestCrawl(unittest.TestCase):
                 if hasattr(arg, "columns")
             )
             self.assertEqual(
-                table.columns[1]._cells, ["(No Subject)", "Subject 2", "Subject 3"]
+                table.columns[1]._cells, ["(No Subject)", "テスト二", "テスト"]
             )
             self.assertEqual(
                 table.columns[2]._cells,

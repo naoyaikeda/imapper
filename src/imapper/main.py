@@ -89,13 +89,28 @@ def _authenticate_client(client: IMAPClient, server_setting: dict) -> bool:
         return False
 
 
+def _decode_bytes(raw: bytes, charset: str | None = None) -> str:
+    """バイト列を指定文字コードまたはISO-2022-JP/UTF-8でデコードする"""
+    if charset:
+        try:
+            return raw.decode(charset, errors="replace")
+        except LookupError:
+            pass
+    for encoding in ("iso-2022-jp", "utf-8"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", errors="replace")
+
+
 def parse_header_str(data: bytes | str | None) -> str:
-    """MIMEエンコードされた文字列をデコードして通常の文字列にする"""
+    """MIMEエンコードされた文字列やバイト列をデコードして通常の文字列にする"""
     if not data:
         return ""
     # バイト列なら文字列に変換（未デコードのヘッダー文字列）
     if isinstance(data, bytes):
-        text = data.decode("utf-8", errors="replace")
+        text = _decode_bytes(data)
     else:
         text = data
 
@@ -103,7 +118,7 @@ def parse_header_str(data: bytes | str | None) -> str:
     result = []
     for fragment, charset in decoded_fragments:
         if isinstance(fragment, bytes):
-            result.append(fragment.decode(charset or "utf-8", errors="replace"))
+            result.append(_decode_bytes(fragment, charset))
         else:
             result.append(fragment)
     return "".join(result)
@@ -119,9 +134,10 @@ def crawl(days_delta: int):
             break
 
         client.select_folder("INBOX")
-        messages = client.search(["UNSEEN"])
+        status = client.folder_status("INBOX", ["UNSEEN"])
+        unseen_count = status.get(b"UNSEEN", 0)
 
-        console.print(f"Unseen messages {len(messages)}")
+        console.print(f"Unseen messages {unseen_count}")
 
         since_date = date.today() - timedelta(days=days_delta)
         criteria = ["UNSEEN", "SINCE", since_date]
@@ -142,7 +158,7 @@ def crawl(days_delta: int):
                 envelope = data[b"ENVELOPE"]
                 date_str = envelope.date.strftime("%Y-%m-%d %H:%M:%S")
                 subject = (
-                    envelope.subject.decode(errors="replace")
+                    parse_header_str(envelope.subject)
                     if envelope.subject
                     else "(No Subject)"
                 )
