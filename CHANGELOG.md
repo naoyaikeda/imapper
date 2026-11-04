@@ -7,6 +7,20 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-04
+
+### Added
+
+- Microsoft Exchange Online（Office 365）向けのOAuth2認証モジュール（`auth.exauth.ExchangeAuth`）およびデバイスコードフローによるアカウント追加コマンド（`imapper add exchange`）を追加。
+- Google（Gmail）向けのOAuth2認証モジュール（`auth.gauth.GoogleAuth`）を追加。
+- IMAP接続時の認証モード切り替え（`standard` / `oauth2` / `exchange`）および `exchange` モードでのトークン期限切れ時におけるリフレッシュトークンを用いた自動更新・プロファイル保存機能を追加。
+- コア機能（プロファイル読み込み、ヘッダーデコード、未読メールクロール、本文抽出、メール閲覧、CLI引数解析）のユニットテスト（`tests/test_main.py`）を追加。
+
+### Changed
+
+- `crawl` 実行時のINBOX総未読件数の取得方法を `SEARCH UNSEEN` から `folder_status("INBOX", ["UNSEEN"])` に変更。
+- `crawl` の一覧表示で件名（`Subject`）も `parse_header_str` によるMIMEデコード対象とし、未指定文字コードや生バイト列に対するISO-2022-JP / UTF-8フォールバックデコード処理を追加。
+
 ## [0.2.0] - 2026-11-04
 
 ### Added
