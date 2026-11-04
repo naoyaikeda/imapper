@@ -1,0 +1,21 @@
+[project]
+name = "imapper"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Naoya Ikeda", email = "naoya.ikeda@exchange.grayrecord.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "imapclient>=4.1.0",
+    "python-dotenv>=1.2.4",
+    "rich>=15.0.0",
+]
+
+[project.scripts]
+imapper = "imapper.main:main"
+
+[build-system]
+requires = ["uv_build>=0.13.7,<0.14.0"]
+build-backend = "uv_build"
