@@ -54,6 +54,8 @@ def crawl(days_delta: int):
 
         if login_mode == "standard":
             client.login(server_setting["user"], server_setting["password"])
+        elif login_mode == "oauth2":
+            client.oauth2_login(server_setting["user"], server_setting["password"])
         else:
             console.print("Illegal login mode")
             break
@@ -174,6 +176,8 @@ def read_mail(msg_id_str: str, account: str | None = None) -> bool:
                 login_mode = server_setting["mode"]
             if login_mode == "standard":
                 client.login(server_setting["user"], server_setting["password"])
+            elif login_mode == "oauth2":
+                client.oauth2_login(server_setting["user"], server_setting["password"])
             else:
                 console.print("Illegal login mode")
                 break
