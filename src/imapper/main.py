@@ -46,9 +46,17 @@ def parse_header_str(data: bytes | str | None) -> str:
 def crawl(days_delta: int):
     for key, server_setting in profiles.items():
         console.print(f"Server: {key}")
+        login_mode = "standard"
+        if "mode" in server_setting:
+            login_mode = server_setting["mode"]
 
         client = IMAPClient(host=server_setting["server"])
-        client.login(server_setting["user"], server_setting["password"])
+
+        if login_mode == "standard":
+            client.login(server_setting["user"], server_setting["password"])
+        else:
+            console.print("Illegal login mode")
+            break
         client.select_folder("INBOX")
         messages = client.search(["UNSEEN"])
 
@@ -159,8 +167,17 @@ def read_mail(msg_id_str: str, account: str | None = None) -> bool:
 
     for key, server_setting in targets.items():
         try:
+            login_mode = "standard"
+
             client = IMAPClient(host=server_setting["server"])
-            client.login(server_setting["user"], server_setting["password"])
+            if "mode" in server_setting:
+                login_mode = server_setting["mode"]
+            if login_mode == "standard":
+                client.login(server_setting["user"], server_setting["password"])
+            else:
+                console.print("Illegal login mode")
+                break
+
             client.select_folder("INBOX")
 
             fetch_data = client.fetch([msg_id], ["BODY[]", "RFC822", "FLAGS"])
